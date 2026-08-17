@@ -47,15 +47,36 @@ class multiviewDiffusionNet:
         )
 
         pipeline.scheduler = UniPCMultistepScheduler.from_config(pipeline.scheduler.config, timestep_spacing="trailing")
-        pipeline.set_progress_bar_config(disable=True)
+        # HY3D_PROGRESS=1 re-enables the per-step bar. Upstream disables it, which
+        # makes a slow denoise indistinguishable from a hang.
+        pipeline.set_progress_bar_config(disable=os.environ.get("HY3D_PROGRESS", "0") != "1")
         pipeline.eval()
         setattr(pipeline, "view_size", cfg.model.params.get("view_size", 320))
-        self.pipeline = pipeline.to(self.device)
 
+        # HY3D_CPU_OFFLOAD=1 streams the components on/off the GPU one at a time
+        # (text_encoder -> image_encoder -> unet -> vae) so only the module
+        # actually running is resident. During the denoise loop that means the
+        # UNet alone (~2GB) instead of the whole ~4.5GB pipeline, which is what
+        # lets 8GB cards keep the loop inside real VRAM instead of letting the
+        # WDDM driver spill to system RAM. Costs a little per-step latency.
+        if os.environ.get("HY3D_CPU_OFFLOAD", "0") == "1":
+            pipeline.enable_model_cpu_offload(gpu_id=0)
+            self.pipeline = pipeline
+        else:
+            self.pipeline = pipeline.to(self.device)
+
+        # HY3D_OFFLOAD_DINO=1 keeps DINOv2-giant (~2.2GB in fp16) on the CPU
+        # between calls. It runs exactly once per generation, to build the
+        # conditioning, yet otherwise stays resident for the entire denoise loop.
+        # On an 8GB card that 2.2GB is the difference between the UNet fitting in
+        # VRAM and the driver spilling to system RAM (which makes the denoise
+        # ~20x slower). Output is bit-identical either way.
+        self.offload_dino = os.environ.get("HY3D_OFFLOAD_DINO", "0") == "1"
         if hasattr(self.pipeline.unet, "use_dino") and self.pipeline.unet.use_dino:
             from hunyuanpaintpbr.unet.modules import Dino_v2
             self.dino_v2 = Dino_v2(config.dino_ckpt_path).to(torch.float16)
-            self.dino_v2 = self.dino_v2.to(self.device)
+            if not self.offload_dino:
+                self.dino_v2 = self.dino_v2.to(self.device)
 
     def seed_everything(self, seed):
         random.seed(seed)
@@ -98,7 +119,14 @@ class multiviewDiffusionNet:
         kwargs["images_position"] = position_image
 
         if hasattr(self.pipeline.unet, "use_dino") and self.pipeline.unet.use_dino:
+            if self.offload_dino:
+                self.dino_v2 = self.dino_v2.to(self.device)
             dino_hidden_states = self.dino_v2(input_images[0])
+            if self.offload_dino:
+                # Push it back before the denoise loop starts -- that loop is
+                # where the VRAM pressure actually is.
+                self.dino_v2 = self.dino_v2.to("cpu")
+                torch.cuda.empty_cache()
             kwargs["dino_hidden_states"] = dino_hidden_states
 
         sync_condition = None

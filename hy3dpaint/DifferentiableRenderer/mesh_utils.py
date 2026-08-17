@@ -13,6 +13,8 @@
 # by Tencent in accordance with TENCENT HUNYUAN COMMUNITY LICENSE AGREEMENT.
 
 import os
+import glob
+import shutil
 import cv2
 try:
     import bpy
@@ -313,16 +315,25 @@ sys.exit(0)
 ''')
         script_path = f.name
     
-    # Find Blender executable
+    # Find Blender executable. BLENDER_PATH wins, then whatever is on PATH,
+    # then the per-platform default install locations. The Windows entries are
+    # globbed because Blender installs into a version-numbered directory.
     blender_paths = [
+        os.environ.get('BLENDER_PATH'),
+        shutil.which('blender'),
+        # macOS
         '/opt/homebrew/bin/blender',
         '/usr/local/bin/blender',
         '/Applications/Blender.app/Contents/MacOS/Blender',
     ]
-    
+    blender_paths += sorted(
+        glob.glob(r'C:\Program Files\Blender Foundation\Blender *\blender.exe'),
+        reverse=True,  # newest version first
+    )
+
     blender_exe = None
     for path in blender_paths:
-        if os.path.exists(path):
+        if path and os.path.exists(path):
             blender_exe = path
             break
     
@@ -333,7 +344,9 @@ sys.exit(0)
     # Run Blender in background mode
     try:
         cmd = [blender_exe, '--background', '--python', script_path]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        # 30s was far too tight: Blender has to cold-start, import an OBJ with
+        # 40k faces and load 4096^2 PBR maps before it can export.
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
         
         # Clean up temp script
         os.unlink(script_path)

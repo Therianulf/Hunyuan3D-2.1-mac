@@ -12,6 +12,8 @@
 # fine-tuning enabling code and other elements of the foregoing made publicly available
 # by Tencent in accordance with TENCENT HUNYUAN COMMUNITY LICENSE AGREEMENT.
 
+import os
+
 import numpy as np
 from PIL import Image
 
@@ -27,7 +29,11 @@ class imageSuperNet:
             model_path=config.realesrgan_ckpt_path,
             dni_weight=None,
             model=model,
-            tile=0,
+            # tile=0 upscales the whole image in one allocation. Each view goes
+            # 512 -> 2048, and there are 2*num_view of them (albedo + MR), which
+            # OOMs an 8GB card. Tiling is near-lossless here; tile_pad=10 covers
+            # the seams.
+            tile=int(os.environ.get("HY3D_ESRGAN_TILE", 512)),
             tile_pad=10,
             pre_pad=0,
             half=True,

@@ -1,0 +1,98 @@
+# Windows/CUDA requirements for Hunyuan3D-2.1
+# Target: Python 3.11, torch 2.5.1+cu124, RTX 2070 (sm_75, 8GB)
+#
+# Install order (torch must land BEFORE this file -- basicsr's setup.py imports torch):
+#   py -3.11 -m venv .venv
+#   .venv\Scripts\python -m pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 \
+#       --index-url https://download.pytorch.org/whl/cu124
+#   .venv\Scripts\python -m pip install -r requirements-windows.txt
+#
+# Derived from requirements.txt. Deviations are listed at the bottom.
+
+# Build Tools
+ninja==1.11.1.1
+pybind11==2.13.4
+
+# Core ML/Deep Learning
+transformers==4.46.0
+diffusers==0.30.0
+accelerate==1.1.1
+pytorch-lightning==1.9.5
+huggingface-hub==0.30.2
+safetensors==0.4.4
+
+# Scientific Computing
+numpy==1.26.4
+scipy==1.14.1
+einops==0.8.0
+pandas==2.2.2
+
+# Computer Vision & Image Processing
+opencv-python==4.10.0.84
+imageio==2.36.0
+scikit-image==0.24.0
+rembg==2.0.65
+realesrgan==0.3.0
+basicsr==1.4.2
+tb_nightly==2.18.0a20240726
+
+# 3D Mesh Processing
+trimesh==4.4.7
+pymeshlab
+pygltflib==1.16.3
+xatlas==0.0.9
+open3d  # unused -- see note below; kept only for parity with requirements.txt
+
+# Configuration Management
+omegaconf==2.3.0
+pyyaml==6.0.2
+configargparse==1.7
+
+# Web Framework (for gradio_app.py)
+gradio==5.33.0
+fastapi==0.115.12
+uvicorn==0.34.3
+
+# Utilities
+tqdm==4.66.5
+psutil==6.0.0
+
+# ONNX Runtime (backs rembg background removal)
+onnxruntime==1.19.2
+torchmetrics==1.6.0
+pydantic==2.10.6
+
+timm
+torchdiffeq
+
+# ---------------------------------------------------------------------------
+# Deviations from requirements.txt, and why:
+#
+#   numpy 1.24.4 -> 1.26.4    1.24.4 predates solid cp311 wheel coverage for the
+#                             rest of this stack. Must stay <2.0: basicsr and
+#                             realesrgan break on the numpy 2.x ABI.
+#   onnxruntime 1.16.3 -> 1.19.2   1.16.3 has no cp311 Windows wheel.
+#   pymeshlab unpinned        2022.2.post3 has no cp311 Windows wheel.
+#   open3d unpinned           Let pip resolve the current cp311 win_amd64 build.
+#
+#   DROPPED cupy-cuda12x      Never imported anywhere in the repo (verified by
+#                             grep). ~500MB of install for nothing.
+#   DROPPED deepspeed         Never imported on the inference path, and it has no
+#                             supported Windows build.
+#   DROPPED bpy==4.0          Wheels exist only for Python 3.10, and it is only
+#                             needed by the standalone blender_*.py scripts.
+#                             mesh_utils.py already falls back to driving an
+#                             external Blender executable when bpy is absent.
+#   DROPPED pythreejs         Jupyter-only visualisation widget, never imported.
+#
+#   open3d is also never imported anywhere in this repo (grepped for both
+#   `open3d` and `o3d`). It is ~400MB and can be dropped outright if you want a
+#   leaner env; it is kept here only so this file stays a faithful analogue of
+#   requirements.txt.
+#
+#   The two --extra-index-url mirrors from requirements.txt (Tencent Cloud and
+#   Aliyun) are omitted -- they are slow or unreachable outside mainland China
+#   and pip will fall through to PyPI anyway.
+#
+# xatlas IS required here (uvwrap_utils.py) even though requirements-macos.txt
+# commented it out -- it has working Windows wheels.
